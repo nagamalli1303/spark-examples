@@ -1,0 +1,387 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>com.spark.pkg</groupId>
+	<artifactId>ScalaProject</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+
+	<dependencies>
+		<dependency> <!-- Spark -->
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-core_2.10</artifactId>
+			<version>1.5.1</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency> <!-- Spark Streaming -->
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-streaming_2.10</artifactId>
+			<version>1.5.1</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency> <!-- Kafka -->
+			<groupId>org.apache.kafka</groupId>
+			<artifactId>kafka_2.10</artifactId>
+			<version>0.9.0.0</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.kafka</groupId>
+			<artifactId>kafka-clients</artifactId>
+			<version>0.9.0.0</version>
+		</dependency>
+		<dependency> <!-- Command Line Parsing -->
+			<groupId>commons-cli</groupId>
+			<artifactId>commons-cli</artifactId>
+			<version>1.2</version>
+		</dependency>
+		
+		<dependency>
+    		<groupId>mysql</groupId>
+    		<artifactId>mysql-connector-java</artifactId>
+    		<version>5.1.39</version>
+		</dependency>
+
+		<!-- <dependency> <groupId>org.apache.kafka</groupId> <artifactId>kafka_2.9.2</artifactId> 
+			<version>0.8.1.1</version> <scope>compile</scope> <exclusions> <exclusion> 
+			<artifactId>jmxri</artifactId> <groupId>com.sun.jmx</groupId> </exclusion> 
+			<exclusion> <artifactId>jms</artifactId> <groupId>javax.jms</groupId> </exclusion> 
+			<exclusion> <artifactId>jmxtools</artifactId> <groupId>com.sun.jdmk</groupId> 
+			</exclusion> </exclusions> </dependency> -->
+		<dependency>
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-streaming-kafka_2.10</artifactId>
+			<version>1.5.1</version>
+		</dependency>
+		<dependency> <!-- Spark SQL -->
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-sql_2.10</artifactId>
+			<version>1.5.1</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency> <!-- Spark HIVE -->
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-hive_2.10</artifactId>
+			<version>1.5.1</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-common</artifactId>
+			<version>0.98.8-hadoop2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-server</artifactId>
+			<version>0.98.8-hadoop2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-client</artifactId>
+			<version>0.98.8-hadoop2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-client</artifactId>
+			<version>2.4.1</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.storm</groupId>
+			<artifactId>storm-core</artifactId>
+			<version>0.9.5</version>
+		</dependency>
+	</dependencies>
+	<build>
+		<plugins>
+			<plugin>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>2.4</version>
+				<configuration>
+					<descriptorRefs>
+						<descriptorRef>jar-with-dependencies</descriptorRef>
+					</descriptorRefs>
+				</configuration>
+				<executions>
+					<execution>
+						<id>make-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>
+
+package com.spark.pkg
+
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.DataFrame
+import java.sql.DriverManager
+import java.sql.Connection
+import java.sql.ResultSet
+
+object SparkMysqlV{
+  
+//  case class Person(name: String, age: Int)
+  
+  def main(args: Array[String]) = {
+    
+    val conf = new SparkConf().setAppName("WordSQL").setMaster("local")
+      
+    val sc = new SparkContext(conf)
+
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    
+//    val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc)
+//    import sqlContext.implicits._
+
+//    val schemaName = "information_schema"
+    val schemaName = "test"
+    val conn_str = "jdbc:mysql://localhost:3306/" + schemaName
+    val driver =  "com.mysql.jdbc.Driver"
+    val usr = "root"
+    val pwd = "root"
+    val tbl = "columns"
+    
+//    val dataframe_mysql =  sqlContext.read.format("jdbc").option("url", conn_str).option("driver",driver).
+//    option("dbtable", tbl).option("user", usr).option("password", pwd).load().where($"TABLE_SCHEMA" === "test")
+    
+//    val output = "/home/nag/work/output/sparmysqloutput"
+//    dataframe_mysql.rdd.saveAsTextFile(output)
+    
+    val appid = "app1"
+    val qry1 = """(select * from """ + schemaName + """.test_apps where app_id = """"+ appid + """") test"""
+    
+    val qry_org = """(	
+    select 
+    test_apps.app_id,
+    test_apps.app_name,
+    test_apps.contact,
+    test_rules.rule_id,
+    test_rules.rule_desc,
+    test_rules.rule_type,
+    test_rules.rule_message,
+    test_rules.rule_actions,
+    test_master_table.object_id,
+    test_master_table.object_type,
+    test_master_table.schema_name,
+    test_master_table.object_name,
+    test_master_table.column_name,
+    test_master_table.column_datatype,
+    test_master_table.length,
+    test_master_table.scale,
+    test_master_table.precession,    
+    test_master_table.cluster_id,
+    test_master_table.active_flag as master_active_flag,
+    test_rules_map.active_flag    
+    from test.test_apps as test_apps,test.test_rules as test_rules,
+         test.test_master_table as test_master_table,  
+         test.test_rules_map as test_rules_map
+    where test_apps.app_id = test_master_table.app_id and 
+             test_rules.rule_id = test_rules_map.rule_id and 
+             test_master_table.object_id = test_rules_map.object_id and 
+             test_rules_map.rule_id = test_rules.rule_id 
+             and test_apps.app_id = """" + appid + """" 
+             order by test_master_table.object_name,test_rules.rule_id) test"""
+    
+    val test_qry = s"select test_apps.app_id, test_apps.app_name, test_apps.contact, " + 
+     "test_rules.rule_id, test_rules.rule_desc, test_rules.rule_type, test_rules.rule_message, test_rules.rule_actions,  " +
+     "test_master_table.object_id, test_master_table.object_type, test_master_table.schema_name, " +
+     "test_master_table.object_name, test_master_table.column_name, test_master_table.column_datatype, " +
+     "test_master_table.length, test_master_table.scale, test_master_table.precession, test_master_table.active_flag as master_active_flag, " +    
+     "test_master_table.cluster_id, test_rules_map.active_flag " +    
+     "from test.test_apps as test_apps,test.test_rules as test_rules," +
+     "test.test_master_table as test_master_table, test.test_rules_map as test_rules_map " +
+     "where test_apps.app_id = test_master_table.app_id and " + 
+     "test_rules.rule_id = test_rules_map.rule_id and " +
+     "test_master_table.object_id = test_rules_map.object_id and " + 
+     "test_rules_map.rule_id = test_rules.rule_id " + 
+     "and test_apps.app_id = " + "\"" + appid + "\" " + 
+     "order by test_master_table.object_name,test_rules.rule_id"   
+
+    var connection:Connection = null
+    var tbl_name = ""
+    var test_df : DataFrame = null
+    	
+    try {
+    	//  make the connection
+    	Class.forName(driver)
+    	connection = DriverManager.getConnection(conn_str, usr, pwd)
+
+    	// create the statement, and run the select query
+    	val statement = connection.createStatement()
+    	val resultSet = statement.executeQuery(test_qry)
+    	
+    	while (resultSet.next() ) {
+    		var tbl_name_rt = get_tableData(resultSet,tbl_name)
+    		tbl_name = tbl_name_rt    		
+    	}
+
+    } catch {
+    case e => e.printStackTrace
+    }
+    connection.close()
+     
+    def get_tableData(resultSet: ResultSet,tbl_name: String) : String = {
+      
+      var object_type = resultSet.getString("object_type")
+    	var schema_name = resultSet.getString("schema_name")
+    	var object_name = resultSet.getString("object_name")
+    	var column_name = resultSet.getString("column_name")
+    	
+    	var object_name_tmp = ""
+      println("object_name: " + object_name + " column_name:" + column_name + "\n")
+      
+      object_name_tmp = object_name
+      
+      if (object_type == "table") {
+        if (object_name == tbl_name){
+          print("both tables are equal:" + object_name + " " + tbl_name + "\n")  
+          println("object_name: " + object_name + " column_name:" + column_name + "\n")
+//          test_df.show()
+        }
+        else{
+          print("both tables are not equal:" + object_name + " " + tbl_name)
+          println("object_name: " + object_name + " column_name:" + column_name + "\n")
+        	test_df = sqlContext.read.format("jdbc").options(          
+        			Map("url" ->  conn_str,
+        					"driver" -> driver,
+        					"user" -> usr,
+        					"password" -> pwd,
+        					"dbtable" -> object_name
+        					//    				"fetchSize" -> "10000"   
+        					)).load()        	 				
+        	test_df.show  
+        	process_testRules(resultSet,test_df)
+        }
+    	  
+      }      
+      return object_name
+    }
+    
+    def process_testRules(resultSet: ResultSet, test_df: DataFrame): Unit = {
+      var app_id = resultSet.getString("app_id") 
+    	var app_name = resultSet.getString("app_name")
+    	var contact = resultSet.getString("contact")
+    	var rule_id = resultSet.getString("rule_id")
+    	var rule_desc = resultSet.getString("rule_desc")
+    	var rule_type = resultSet.getString("rule_type")
+    	var rule_message = resultSet.getString("rule_message")
+    	var rule_actions = resultSet.getString("rule_actions")    	
+    	var object_id = resultSet.getString("object_id")
+    	var object_type = resultSet.getString("object_type")
+    	var schema_name = resultSet.getString("schema_name")
+    	var object_name = resultSet.getString("object_name")
+    	var column_name = resultSet.getString("column_name")
+    	var column_datatype = resultSet.getString("column_datatype")
+    	var length = resultSet.getInt("length")
+    	var scale = resultSet.getInt("scale")
+    	var precession = resultSet.getInt("precession")
+    	var cluster_id = resultSet.getString("cluster_id")
+    	var master_active_flag = resultSet.getString("master_active_flag")
+    	var active_flag = resultSet.getString("active_flag")
+    	print ("in process test rules")
+    }
+    
+  sc.stop
+  }
+}    
+    
+/*    				
+    import sqlContext.implicits._
+
+    val people = sc.textFile("/home/nag/work/input/people.txt")
+                   .map(_.split("\t")).map(p => Person(p(0), p(1).trim.toInt)).toDF()
+    
+    people.registerTempTable("people")
+
+    val teenagers = sqlContext.sql("SELECT name, age FROM people WHERE age >= 13 AND age <= 19")
+
+    teenagers.map(t => "Name: " + t(0)).collect().foreach(println)
+
+    teenagers.map(t => "Name: " + t.getAs[String]("name")).collect().foreach(println)
+
+    teenagers.map(_.getValuesMap[Any](List("name", "age"))).collect().foreach(println)
+  
+// */  
+  
+  
+  use test:
+
+create table test_apps(
+app_id varchar(10),
+app_name varchar(20),
+contact varchar(20)
+);
+
+insert into test_apps values("app1","app1","e-mail id");
+insert into test_apps values("app2","app2","e-mail id");
+
+create table test_rules(
+rule_id int,
+rule_desc varchar(50),
+rule_type varchar(20),
+rule_message varchar(100),
+rule_actions varchar(100),
+create_timestamp timestamp,
+created_user varchar(50)
+);
+insert into test_rules values(1, "Data length","ERROR","length incorrect","length,space,null",current_timestamp,"zzz");
+insert into test_rules values(2, "Number data","ERROR","invalid datatype","number,space,null",current_timestamp,"zzz");
+insert into test_rules values(3, "timestamp","ERROR","invalid datatype","date,space,null",current_timestamp,"zzz");
+insert into test_rules values(4, "timestamp","ERROR","invalid datatype","date,space,null",current_timestamp,"zzz");
+
+create table test_master_table(
+object_id int,
+object_type varchar(10),
+schema_name varchar(20),
+object_name varchar(50),
+column_name varchar(30),
+column_datatype varchar(10),
+length int,
+scale int,
+precession int,
+app_id varchar(10),
+cluster_id varchar(50),
+active_flag int
+);
+insert into test_master_table values(1, "table","test","test_rules","rule_id","int",0,0,0,"app1","clusterid",1);
+insert into test_master_table values(2, "table","test","test_rules","rule_desc","varchar",50,0,0,"app1","clusterid",1);
+insert into test_master_table values(3, "table","test","test_rules","rule_type","varchar",20,0,0,"app1","clusterid",1);
+insert into test_master_table values(4, "table","test","test_rules","rule_message","varchar",100,0,0,"app1","clusterid",1);
+insert into test_master_table values(4, "table","test","test_rules","rule_actions","varchar",100,0,0,"app1","clusterid",1);
+insert into test_master_table values(5, "table","test","test_rules","create_timestamp","timestamp",24,0,0,"app1","clusterid",1);
+insert into test_master_table values(6, "table","test","test_rules","crated_user","varchar",50,0,0,"app1","clusterid",1);
+insert into test_master_table values(7, "table","test","test_rules_map","object_id","int",0,0,0,"app1","clusterid",1);
+insert into test_master_table values(8, "table","test","test_rules_map","rule_id","int",0,0,0,"app1","clusterid",1);
+insert into test_master_table values(9, "table","test","test_rules_map","active_flag","int",0,0,0,"app1","clusterid",1);
+
+create table test_rules_map(
+object_id int,
+rule_id int,
+active_flag int
+);
+insert into test_rules_map values(1,2,1);
+insert into test_rules_map values(2,1,1);
+insert into test_rules_map values(3,1,1);
+insert into test_rules_map values(4,1,1);
+insert into test_rules_map values(5,3,1);
+insert into test_rules_map values(6,1,1);
+insert into test_rules_map values(7,2,1);
+insert into test_rules_map values(8,2,1);
+insert into test_rules_map values(9,2,1);
+
+create table test_results(
+object_id int,
+rule_id int,
+run_date timestamp,
+result varchar(20),
+record_count int,
+error_count int,
+warning_count int,
+comment varchar(100)
+);
