@@ -123,6 +123,10 @@ import org.apache.spark.sql.DataFrame
 import java.sql.DriverManager
 import java.sql.Connection
 import java.sql.ResultSet
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.Row
+import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.MutableList
 
 object SparkMysqlV{
   
@@ -135,6 +139,7 @@ object SparkMysqlV{
     val sc = new SparkContext(conf)
 
     val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    import sqlContext.implicits._
     
 //    val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc)
 //    import sqlContext.implicits._
@@ -148,15 +153,15 @@ object SparkMysqlV{
     val tbl = "columns"
     
 //    val dataframe_mysql =  sqlContext.read.format("jdbc").option("url", conn_str).option("driver",driver).
-//    option("dbtable", tbl).option("user", usr).option("password", pwd).load().where($"TABLE_SCHEMA" === "test")
+//    option("dbtable", tbl).option("user", usr).option("password", pwd).load().where($"TABLE_SCHEMA" === "app")
     
-//    val output = "/home/nag/work/output/sparmysqloutput"
+//    val output = "/home/work/output/sparmysqloutput"
 //    dataframe_mysql.rdd.saveAsTextFile(output)
     
-    val appid = "app1"
+    val appid = "app"
     val qry1 = """(select * from """ + schemaName + """.test_apps where app_id = """"+ appid + """") test"""
     
-    val qry_org = """(	
+    val qry = """(	
     select 
     test_apps.app_id,
     test_apps.app_name,
@@ -165,7 +170,7 @@ object SparkMysqlV{
     test_rules.rule_desc,
     test_rules.rule_type,
     test_rules.rule_message,
-    test_rules.rule_actions,
+    test_rules.rule_actions,    
     test_master_table.object_id,
     test_master_table.object_type,
     test_master_table.schema_name,
@@ -176,7 +181,11 @@ object SparkMysqlV{
     test_master_table.scale,
     test_master_table.precession,    
     test_master_table.cluster_id,
+    test_master_table.rule_id as master_rule_id,
     test_master_table.active_flag as master_active_flag,
+    test_master_table.operators,
+    test_master_table.file_delim,
+    test_master_table.columns_priority,
     test_rules_map.active_flag    
     from test.test_apps as test_apps,test.test_rules as test_rules,
          test.test_master_table as test_master_table,  
@@ -189,11 +198,15 @@ object SparkMysqlV{
              order by test_master_table.object_name,test_rules.rule_id) test"""
     
     val test_qry = s"select test_apps.app_id, test_apps.app_name, test_apps.contact, " + 
-     "test_rules.rule_id, test_rules.rule_desc, test_rules.rule_type, test_rules.rule_message, test_rules.rule_actions,  " +
+     "test_rules.rule_id, test_rules.rule_desc, test_rules.rule_type, test_rules.rule_message, " + 
+     "test_rules.rule_actions, " +
      "test_master_table.object_id, test_master_table.object_type, test_master_table.schema_name, " +
      "test_master_table.object_name, test_master_table.column_name, test_master_table.column_datatype, " +
-     "test_master_table.length, test_master_table.scale, test_master_table.precession, test_master_table.active_flag as master_active_flag, " +    
-     "test_master_table.cluster_id, test_rules_map.active_flag " +    
+     "test_master_table.length, test_master_table.scale, test_master_table.precession, " +
+     "test_master_table.cluster_id, test_master_table.rule_id as master_rule_id, " +
+     "test_master_table.active_flag as master_active_flag, test_master_table.operators, " +    
+     "test_master_table.file_delim, test_master_table.columns_priority, " +
+     "test_rules_map.active_flag " +    
      "from test.test_apps as test_apps,test.test_rules as test_rules," +
      "test.test_master_table as test_master_table, test.test_rules_map as test_rules_map " +
      "where test_apps.app_id = test_master_table.app_id and " + 
@@ -206,100 +219,382 @@ object SparkMysqlV{
     var connection:Connection = null
     var tbl_name = ""
     var test_df : DataFrame = null
-    	
-    try {
-    	//  make the connection
-    	Class.forName(driver)
-    	connection = DriverManager.getConnection(conn_str, usr, pwd)
-
-    	// create the statement, and run the select query
-    	val statement = connection.createStatement()
-    	val resultSet = statement.executeQuery(test_qry)
-    	
-    	while (resultSet.next() ) {
-    		var tbl_name_rt = get_tableData(resultSet,tbl_name)
-    		tbl_name = tbl_name_rt    		
-    	}
-
-    } catch {
-    case e => e.printStackTrace
-    }
-    connection.close()
-     
-    def get_tableData(resultSet: ResultSet,tbl_name: String) : String = {
-      
-      var object_type = resultSet.getString("object_type")
-    	var schema_name = resultSet.getString("schema_name")
-    	var object_name = resultSet.getString("object_name")
-    	var column_name = resultSet.getString("column_name")
-    	
-    	var object_name_tmp = ""
-      println("object_name: " + object_name + " column_name:" + column_name + "\n")
-      
-      object_name_tmp = object_name
-      
-      if (object_type == "table") {
-        if (object_name == tbl_name){
-          print("both tables are equal:" + object_name + " " + tbl_name + "\n")  
-          println("object_name: " + object_name + " column_name:" + column_name + "\n")
-//          test_df.show()
-        }
-        else{
-          print("both tables are not equal:" + object_name + " " + tbl_name)
-          println("object_name: " + object_name + " column_name:" + column_name + "\n")
-        	test_df = sqlContext.read.format("jdbc").options(          
+    var resultSet:ResultSet = null
+    var test_table_df: DataFrame = null
+    var test_table_rules_df: DataFrame = null
+    
+    
+    var test_master_df : DataFrame = null
+    test_master_df = sqlContext.read.format("jdbc").options(          
         			Map("url" ->  conn_str,
         					"driver" -> driver,
         					"user" -> usr,
         					"password" -> pwd,
-        					"dbtable" -> object_name
+        					"dbtable" -> qry
         					//    				"fetchSize" -> "10000"   
-        					)).load()        	 				
-        	test_df.show  
-        	process_testRules(resultSet,test_df)
-        }
-    	  
-      }      
-      return object_name
+        					)).load()
+        					
+    test_master_df.show
+    
+    var test_table_list = test_master_df.select("object_type","object_name").distinct()
+    .map(r => (r.getString(0), r.getString(1))).collect().toList
+    
+    test_table_list.foreach { x => {
+      
+      var object_type = x._1
+      
+      if (object_type.toLowerCase() == "table") {        
+        var table_name = x._2
+      
+        import sqlContext.implicits._
+        
+        test_table_rules_df = test_master_df.where($"object_name" === table_name)
+        
+        var test_table_rules_list = test_table_rules_df.rdd.collect.toList
+        println (test_table_rules_list.getClass)
+        
+        test_table_rules_df.show
+        
+        test_table_df = sqlContext.read.format("jdbc").options(          
+        		Map("url" ->  conn_str,
+            		"driver" -> driver,
+          			"user" -> usr,
+          			"password" -> pwd,
+          			"dbtable" -> table_name
+          			//    				"fetchSize" -> "10000"   
+          			)).load()
+        var result = List[(String)]()  			
+        var object_result = List[(String)]()
+        process_testRules(test_table_df,test_table_rules_list)
+        object_result = result
+        test_table_df.show()
+        
+        }else if(object_type.toLowerCase() == "file") {
+          println("file handling logic")
+          
+        }else{
+          println("specified object type not handling, please provide object type as table or file")
+        } 
+      }                    					       					
     }
     
-    def process_testRules(resultSet: ResultSet, test_df: DataFrame): Unit = {
-      var app_id = resultSet.getString("app_id") 
-    	var app_name = resultSet.getString("app_name")
-    	var contact = resultSet.getString("contact")
-    	var rule_id = resultSet.getString("rule_id")
-    	var rule_desc = resultSet.getString("rule_desc")
-    	var rule_type = resultSet.getString("rule_type")
-    	var rule_message = resultSet.getString("rule_message")
-    	var rule_actions = resultSet.getString("rule_actions")    	
-    	var object_id = resultSet.getString("object_id")
-    	var object_type = resultSet.getString("object_type")
-    	var schema_name = resultSet.getString("schema_name")
-    	var object_name = resultSet.getString("object_name")
-    	var column_name = resultSet.getString("column_name")
-    	var column_datatype = resultSet.getString("column_datatype")
-    	var length = resultSet.getInt("length")
-    	var scale = resultSet.getInt("scale")
-    	var precession = resultSet.getInt("precession")
-    	var cluster_id = resultSet.getString("cluster_id")
-    	var master_active_flag = resultSet.getString("master_active_flag")
-    	var active_flag = resultSet.getString("active_flag")
-    	print ("in process test rules")
+    def process_testRules(test_table_df:DataFrame, test_table_rules_list:List[Row]): Unit = {
+      println("in process testRules")
+      test_table_df.show
+      
+      test_table_df.foreach { table_row => {        
+        println("table_row:" + table_row)
+          test_table_rules_list.foreach { rules_row => {
+            
+            println("rules_row:" + rules_row)
+            
+            var rule_id = rules_row.getInt(3).toString()
+            var object_name = rules_row.getString(11)
+            var column_name = rules_row.getString(12)
+            println("in process test rules:" + rule_id + " object_name:" + object_name + " column_name:" + column_name)
+            
+            rule_id match {
+              case "1" => numeric_data_check(rules_row,table_row)
+//              case "2" => data_length_check(rules_row,table_row)
+              case "3" => timestamp_format_check(rules_row,table_row)
+              case "4" => date_format_check(rules_row,table_row)
+              case "5" => 
+                          columns_priority_check(rules_row,table_row)
+              case _ => print("rule not matched")        
+            }
+            
+            } 
+          }    
+          
+        } 
+      }
+    }
+         
+    def numeric_data_check(rules_row:Row, table_row:Row): Unit = {
+       println("numeric data check:")
+//      column_values.show()
+    }
+    
+    def data_length_check(rules_row:Row, table_row:Row): Unit = {
+      var app_id = rules_row.toString() 
+    	var app_name = rules_row.getString(1)
+    	var contact = rules_row.getString(2)
+    	var rule_id = rules_row.getInt(3)  
+    	var rule_desc = rules_row.getString(4)
+    	var rule_type = rules_row.getString(5)
+    	var rule_message = rules_row.getString(6)
+    	var rule_actions = rules_row.getString(7)    	
+    	var object_id = rules_row.getInt(8)
+    	var object_type = rules_row.getString(9)
+    	var schema_name = rules_row.getString(10)
+    	var object_name = rules_row.getString(11)
+    	var column_name = rules_row.getString(12)
+    	var column_datatype = rules_row.getString(13)
+    	var length = rules_row.getInt(14)
+    	var scale = rules_row.getInt(15)
+    	var precession = rules_row.getInt(16)
+    	var cluster_id = rules_row.getString(17)
+    	var master_rule_id = rules_row.getInt(18)
+    	var master_active_flag = rules_row.getInt(19)
+    	var operators = rules_row.getString(20)
+    	var file_delim = rules_row.getString(21)
+    	var columns_priority = rules_row.getString(22)
+    	var active_flag = rules_row.getInt(23)
+    	
+    	println(table_row.schema)
+    	var fields = table_row.schema.fields
+    	var field_name:String = ""
+    	var field_name_m: String = "" 
+      var field_dataType_m: String = ""
+      var field_dataType = ""
+      var idx = 0
+      var pos = 0
+      
+//        var rule_process_fields : ListBuffer[(String,String)] = ListBuffer()
+      var rule_process_fields  = List[(String, String)]()
+      println("length:" + fields.length + " " + fields(0) + " " + fields(1) + " " + fields(6))
+      fields.foreach { x => {        
+        field_name = x.name 
+        var data_type = x.dataType.toString()
+        idx += 1
+        field_dataType = ""
+        
+        data_type match {
+            case "IntegerType" | "LongType" | "ShortType" => field_dataType = "Int"
+            case "StringType" => field_dataType = "String"
+            case "DoubleType" => field_dataType = "Decimal"
+            case "DecimalType" => field_dataType = "Decimal"
+            case "DateType" => field_dataType = "Date"
+            case "FloatType" => field_dataType = "Float" 
+            case "BooleanType" => field_dataType = "Boolean"
+            case "TimestampType" => field_dataType = "Timestamp"
+            case "ListType" => field_dataType = "List" 
+        }
+//          println(x.name + "  " + x.dataType)          
+        if (field_name == column_name){
+          rule_process_fields =  ((column_name,field_dataType)) :: rule_process_fields
+          field_name_m = field_name 
+          field_dataType_m = field_dataType
+          pos = idx - 1
+          println(field_name_m + " == " + column_name + " " + field_dataType_m + " " + pos)
+        }
+      }
+    }
+      println("rule_process_fields:" + rule_process_fields)           
+    	var actions = rule_actions.split(",")
+      
+    	for(i <- 0 to actions.length-1){
+    	  println("action:" + actions(i))
+    	  
+    	  if (field_name_m == column_name){
+            if (field_dataType_m.toLowerCase() == "string" ){
+              println(field_dataType_m.toLowerCase() + " == string" )
+              
+              if (actions(i).toLowerCase() == "null") {
+                  println("null test column :" + table_row.getString(pos))
+                if(table_row.getString(pos) == null && table_row.getString(pos).isEmpty()) {
+                  println("column :" + table_row.getString(pos) + " is null")                
+                }               
+              }            
+              else if (actions(i).toLowerCase() == "space") {
+                println("space test column :" + table_row.getString(pos))
+                if(table_row.getString(pos).trim().isEmpty()){
+                  println("column :" + table_row.getString(pos) + " is spaces")
+                } 
+              }
+              else if (actions(i).toLowerCase() == "length") {
+                println("length test column :" + table_row.getString(pos))
+                operators match {                  
+                  case "<" => if(table_row.getString(pos).length() < length)
+                                  println("length table_row.getString(pos).length() " + "<" + length)
+                  case "<=" => if(table_row.getString(pos).length() <= length)
+                                  println("length table_row.getString(pos).length() " + "<=" + length)
+                  case "=" => if(table_row.getString(pos).length() == length)
+                                  println("length table_row.getString(pos).length() " + "==" + length)
+                  case ">" => if(table_row.getString(pos).length() > length)
+                                  println("length table_row.getString(pos).length() " + ">" + length)
+                  case ">=" => if(table_row.getString(pos).length() >= length)
+                                  println("length table_row.getString(pos).length() " + ">=" + length)                      
+                  case _    =>  println("invlaid operator for length")                    
+                }
+              }  
+            }
+    	  }  
+      }
+      
+      println("data lenth check:")
+    }
+    
+    def timestamp_format_check(rules_row:Row, table_row:Row): Unit = {
+      	
+      println("timestamp format check")
+    }
+    
+    def date_format_check(rules_row:Row, table_row:Row): Unit = {
+          	
+      println("date format check")
+    }
+    
+    def columns_priority_check(rules_row:Row, table_row:Row): Unit = {
+      var app_id = rules_row.toString() 
+    	var app_name = rules_row.getString(1)
+    	var contact = rules_row.getString(2)
+    	var rule_id = rules_row.getInt(3)  
+    	var rule_desc = rules_row.getString(4)
+    	var rule_type = rules_row.getString(5)
+    	var rule_message = rules_row.getString(6)
+    	var rule_actions = rules_row.getString(7)    	
+    	var object_id = rules_row.getInt(8)
+    	var object_type = rules_row.getString(9)
+    	var schema_name = rules_row.getString(10)
+    	var object_name = rules_row.getString(11)
+    	var column_name = rules_row.getString(12)
+    	var column_datatype = rules_row.getString(13)
+    	var length = rules_row.getInt(14)
+    	var scale = rules_row.getInt(15)
+    	var precession = rules_row.getInt(16)
+    	var cluster_id = rules_row.getString(17)
+    	var master_rule_id = rules_row.getInt(18)
+    	var master_active_flag = rules_row.getInt(19)
+    	var operators = rules_row.getString(20)
+    	var file_delim = rules_row.getString(21)
+    	var columns_priority = rules_row.getString(22)
+    	var active_flag = rules_row.getInt(23)
+    		
+    	println(table_row.schema)
+    	var fields = table_row.schema.fields
+    	var field_name:String = ""
+    	var field_name_m: String = "" 
+      var field_dataType_m: String = ""
+      var field_pos_m: Int = 0 
+      var field_dataType = ""      
+      var idx = 0
+      var pos = 0
+      
+//        var rule_process_fields : ListBuffer[(String,String)] = ListBuffer()
+      var rule_process_fields  = List[(String,String,Int)]()
+//      println("length:" + fields.length + " " + fields(0) + " " + fields(1) + " " + fields(6))
+      
+      var columns = columns_priority.split(",")
+      
+      fields.foreach { x => {
+        
+        field_name = x.name 
+        var data_type = x.dataType.toString()
+        idx += 1
+        field_dataType = ""
+        
+        data_type match {
+            case "IntegerType" | "LongType" | "ShortType" => field_dataType = "Int"
+            case "StringType" => field_dataType = "String"
+            case "DoubleType" => field_dataType = "Decimal"
+            case "DecimalType" => field_dataType = "Decimal"
+            case "DateType" => field_dataType = "Date"
+            case "FloatType" => field_dataType = "Float" 
+            case "BooleanType" => field_dataType = "Boolean"
+            case "TimestampType" => field_dataType = "Timestamp"
+            case "ListType" => field_dataType = "List" 
+        }
+//          println(x.name + "  " + x.dataType)
+         
+        if (columns.contains(field_name)){
+          field_name_m = field_name 
+          field_dataType_m = field_dataType
+          pos = idx - 1
+          
+          rule_process_fields = rule_process_fields:+((field_name,field_dataType,pos))   
+          
+          println(field_name_m + " == " + field_name + " " + field_dataType_m + " " + pos)
+        }
+      }
+    }
+      
+      rule_process_fields.foreach(f => {println("rule_process_fields:" + f + " " + f._1)})
+      
+//      println("rule_process_fields:" + rule_process_fields)
+      
+    	var actions = rule_actions.split(",")
+    	
+    	var num_fields = rule_process_fields.length
+    	
+    	field_name_m = rule_process_fields(0)._1
+    	field_dataType_m = rule_process_fields(0)._2
+    	field_pos_m = rule_process_fields(0)._3
+    	var pflag = true
+    	var cflag = true
+    	
+    	if (field_name_m == column_name){
+    	    if (table_row.getString(field_pos_m) == null || table_row.getString(field_pos_m).trim.isEmpty()){
+    	      pflag = false
+    	      println("first field test :" + rule_process_fields(0) + "  " + table_row.getString(field_pos_m) + " " + table_row)
+    	    }  
+    	}
+      
+      if(pflag){
+        for(i <- 1 to num_fields-1){
+          field_name_m = rule_process_fields(i)._1
+    	    field_dataType_m = rule_process_fields(i)._2
+    	    field_pos_m = rule_process_fields(i)._3
+    	    
+    	    if (table_row.getString(field_pos_m) == null || table_row.getString(field_pos_m).trim.isEmpty()){
+    	      cflag = false
+    	    }
+    	    else{
+    	      if (cflag == false)
+    	        pflag = false
+    	        
+    	      cflag = true
+    	    }    	      
+        }        
+      }
+      
+      else{
+        for(i <- 1 to num_fields-1){
+          field_name_m = rule_process_fields(i)._1
+    	    field_dataType_m = rule_process_fields(i)._2
+    	    field_pos_m = rule_process_fields(i)._3
+    	    
+    	    if (table_row.getString(field_pos_m) == null || table_row.getString(field_pos_m).trim.isEmpty())
+    	      pflag = true
+    	    else
+    	      pflag = false
+    	        
+        }
+          
+        println("need to handle records with staring spaces") 
+      }
+      
+      var res = ""
+      
+      var result_row = List[(String)]()
+      
+      if ((pflag == true && cflag == false) || (pflag == true && cflag == true) ){
+          res = "valid record"
+        }else{
+          res = "invalid record"
+        }
+      
+        result_row = result_row:+((table_row.toString()))
+        result_row = result_row:+((res))
+        
+        println(result_row)
+
+        println("column priority check:")
     }
     
   sc.stop
   }
 }    
-    
+  
 /*    				
     import sqlContext.implicits._
 
-    val people = sc.textFile("/home/nag/work/input/people.txt")
+    val people = sc.textFile("/home/work/input/people.txt")
                    .map(_.split("\t")).map(p => Person(p(0), p(1).trim.toInt)).toDF()
     
     people.registerTempTable("people")
 
-    val teenagers = sqlContext.sql("SELECT name, age FROM people WHERE age >= 13 AND age <= 19")
+    val teeers = sqlContext.sql("SELECT name, age FROM people WHERE age >= 13 AND age <= 19")
 
     teenagers.map(t => "Name: " + t(0)).collect().foreach(println)
 
@@ -308,9 +603,9 @@ object SparkMysqlV{
     teenagers.map(_.getValuesMap[Any](List("name", "age"))).collect().foreach(println)
   
 // */  
-  
-  
-  use test:
+ 
+
+use test:
 
 create table test_apps(
 app_id varchar(10),
@@ -321,6 +616,7 @@ contact varchar(20)
 insert into test_apps values("app1","app1","e-mail id");
 insert into test_apps values("app2","app2","e-mail id");
 
+
 create table test_rules(
 rule_id int,
 rule_desc varchar(50),
@@ -330,10 +626,12 @@ rule_actions varchar(100),
 create_timestamp timestamp,
 created_user varchar(50)
 );
-insert into test_rules values(1, "Data length","ERROR","length incorrect","length,space,null",current_timestamp,"zzz");
-insert into test_rules values(2, "Number data","ERROR","invalid datatype","number,space,null",current_timestamp,"zzz");
-insert into test_rules values(3, "timestamp","ERROR","invalid datatype","date,space,null",current_timestamp,"zzz");
-insert into test_rules values(4, "timestamp","ERROR","invalid datatype","date,space,null",current_timestamp,"zzz");
+
+insert into test_rules values(1, "Number data type for column","ERROR","invalid datatype","number,space,null",current_timestamp,"abc");
+insert into test_rules values(2, "Data length for column","ERROR","length incorrect","length,space,null",current_timestamp,"abc");
+insert into test_rules values(3, "timestamp format YYYY-MM-DD HH24:MI:SS","ERROR","invalid datatype","date,space,null",current_timestamp,"abc");
+insert into test_rules values(4, "timestamp for DD/MM/YYYY","ERROR","invalid datatype","date,space,null",current_timestamp,"abc");
+insert into test_rules values(5, "column priority check","ERROR","invalid data","space",current_timestamp,"abc");
 
 create table test_master_table(
 object_id int,
@@ -347,33 +645,57 @@ scale int,
 precession int,
 app_id varchar(10),
 cluster_id varchar(50),
-active_flag int
+rule_id int,
+active_flag int,
+operators varchar(50),
+file_delim varchar(10),
+columns_priority varchar(50)
 );
-insert into test_master_table values(1, "table","test","test_rules","rule_id","int",0,0,0,"app1","clusterid",1);
-insert into test_master_table values(2, "table","test","test_rules","rule_desc","varchar",50,0,0,"app1","clusterid",1);
-insert into test_master_table values(3, "table","test","test_rules","rule_type","varchar",20,0,0,"app1","clusterid",1);
-insert into test_master_table values(4, "table","test","test_rules","rule_message","varchar",100,0,0,"app1","clusterid",1);
-insert into test_master_table values(4, "table","test","test_rules","rule_actions","varchar",100,0,0,"app1","clusterid",1);
-insert into test_master_table values(5, "table","test","test_rules","create_timestamp","timestamp",24,0,0,"app1","clusterid",1);
-insert into test_master_table values(6, "table","test","test_rules","crated_user","varchar",50,0,0,"app1","clusterid",1);
-insert into test_master_table values(7, "table","test","test_rules_map","object_id","int",0,0,0,"app1","clusterid",1);
-insert into test_master_table values(8, "table","test","test_rules_map","rule_id","int",0,0,0,"app1","clusterid",1);
-insert into test_master_table values(9, "table","test","test_rules_map","active_flag","int",0,0,0,"app1","clusterid",1);
+insert into test_master_table values(1, "table","test","test_rules","rule_id","int",0,0,0,"app1","clusterid",1,1,null,null,null);
+insert into test_master_table values(2, "table","test","test_rules","rule_desc","varchar",50,0,0,"app1","clusterid",2,1,"<=",null,null);
+insert into test_master_table values(3, "table","test","test_rules","rule_type","varchar",20,0,0,"app1","clusterid",2,1,"<=",null,null);
+insert into test_master_table values(4, "table","test","test_rules","rule_message","varchar",100,0,0,"app1","clusterid",2,1,"<=",null,null);
+insert into test_master_table values(4, "table","test","test_rules","rule_actions","varchar",100,0,0,"app1","clusterid",2,1,"<=",null,null);
+insert into test_master_table values(5, "table","test","test_rules","create_timestamp","timestamp",24,0,0,"app1","clusterid",3,1,null,null,null);
+insert into test_master_table values(6, "table","test","test_rules","created_user","varchar",50,0,0,"app1","clusterid",2,1,"<=",null,null);
+insert into test_master_table values(7, "table","test","test_rules_map","object_id","int",0,0,0,"app1","clusterid",1,1,null,null,null);
+insert into test_master_table values(8, "table","test","test_rules_map","rule_id","int",0,0,0,"app1","clusterid",1,1,null,null,null);
+insert into test_master_table values(9, "table","test","test_rules_map","active_flag","int",0,0,0,"app1","clusterid",1,1,null,null,null);
+insert into test_master_table values(10, "table","test","country_table","country","varchar",20,0,0,"app1","clusterid",5,1,null,null,"country,state,district,city");
 
 create table test_rules_map(
 object_id int,
 rule_id int,
 active_flag int
 );
-insert into test_rules_map values(1,2,1);
-insert into test_rules_map values(2,1,1);
-insert into test_rules_map values(3,1,1);
-insert into test_rules_map values(4,1,1);
+insert into test_rules_map values(1,1,1);
+insert into test_rules_map values(2,2,1);
+insert into test_rules_map values(3,2,1);
+insert into test_rules_map values(4,2,1);
 insert into test_rules_map values(5,3,1);
-insert into test_rules_map values(6,1,1);
-insert into test_rules_map values(7,2,1);
-insert into test_rules_map values(8,2,1);
-insert into test_rules_map values(9,2,1);
+insert into test_rules_map values(6,2,1);
+insert into test_rules_map values(7,1,1);
+insert into test_rules_map values(8,1,1);
+insert into test_rules_map values(9,1,1);
+insert into test_rules_map values(10,5,1);
+
+create table country_table(
+country varchar(20),
+state varchar(20),
+district varchar(20),
+city varchar(20)
+)
+insert into country_table values("A"," "," "," ");
+insert into country_table values("A","B"," ","");
+insert into country_table values("A","B","C"," ");
+insert into country_table values("A","B","C","D");
+insert into country_table values(" "," "," "," ");
+insert into country_table values(" ","B","C","D");
+insert into country_table values("A"," ","C","D");
+insert into country_table values("A","B"," ","D");
+insert into country_table values("A"," "," ","D");
+insert into country_table values("A"," ","C",null);
+
 
 create table test_results(
 object_id int,
