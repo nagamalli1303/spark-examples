@@ -1,0 +1,148 @@
+import numpy as np
+import pandas as pd
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import warnings
+
+#Healthcare App Playstore User Reviews
+healthCareDf = pd.read_csv('/content/sample_data/HealthCare_Customer_Reviews.csv')
+
+print(healthCareDf.shape)
+
+
+from sklearn.model_selection import train_test_split
+
+trainDf, testDf = train_test_split(healthCareDf, test_size=0.3)
+
+print(trainDf.shape)
+print(testDf.shape)
+
+trainDf.head()
+
+testDf.head()
+
+trainDf.isnull().any()
+
+testDf.isnull().any()
+
+trainDf.dropna(subset=['Content'], how='all', inplace=True)
+trainDf.isnull().any()
+
+testDf.dropna(subset=['Content'], how='all', inplace=True)
+trainDf['Content'] = trainDf['Content'].str.replace('\W', ' ', regex=True)
+testDf.isnull().any()
+
+print(trainDf.shape)
+print(testDf.shape)
+
+trainDf["Rating"].unique()
+
+testDf["Rating"].unique()
+
+trainDf['Rating'].value_counts().plot.bar(color = 'pink', figsize = (6, 4))
+
+from sklearn.feature_extraction.text import CountVectorizer
+
+
+cv = CountVectorizer(stop_words = 'english')
+words = cv.fit_transform(trainDf.Content)
+
+sum_words = words.sum(axis=0)
+
+words_freq = [(word, sum_words[0, i]) for word, i in cv.vocabulary_.items()]
+words_freq = sorted(words_freq, key = lambda x: x[1], reverse = True)
+
+frequency = pd.DataFrame(words_freq, columns=['word', 'freq'])
+
+frequency.head(30).plot(x='word', y='freq', kind='bar', figsize=(15, 7), color = 'blue')
+plt.title("Most Frequently Occuring Words - Top 30")
+
+from wordcloud import WordCloud
+positive_words =' '.join([text for text in trainDf['Content'][trainDf['Rating'] > 3]])
+
+wordcloud = WordCloud(width=800, height=500, random_state = 0, max_font_size = 110).generate(positive_words)
+plt.figure(figsize=(10, 7))
+plt.imshow(wordcloud, interpolation="bilinear")
+plt.axis('off')
+plt.title('The Positive Words')
+plt.show()
+
+from wordcloud import WordCloud
+negative_words =' '.join([text for text in trainDf['Content'][trainDf['Rating'] < 3]])
+
+wordcloud = WordCloud(width=800, height=500, random_state = 0, max_font_size = 110).generate(negative_words)
+plt.figure(figsize=(10, 7))
+plt.imshow(wordcloud, interpolation="bilinear")
+plt.axis('off')
+plt.title('The Negative Words')
+plt.show()
+
+import re
+import string
+import nltk
+nltk.download('stopwords')
+nltk.download('wordnet')
+from nltk.corpus import stopwords
+from nltk.stem.wordnet import WordNetLemmatizer
+from nltk.corpus import wordnet
+lemmatizer = WordNetLemmatizer()
+
+stop = set(stopwords.words('english')) #set of stopwords
+
+def cleanhtml(sentence): #function to clean the word of any html-tags
+    cleanr = re.compile('<.*?>')
+    cleantext = re.sub(cleanr, ' ', sentence)
+    return cleantext
+def cleanpunc(sentence): #function to clean the word of any punctuation or special characters
+    cleaned = re.sub(r'[?|!|\'|"|#]',r'',sentence)
+    cleaned = re.sub(r'[.|,|)|(|\|/]',r' ',cleaned)
+    return  cleaned
+print(stop)
+
+
+final_string=[]
+
+for sent in trainDf['Content'].values:
+    filtered_sentence=[]
+    #print(sent);
+    sent=cleanhtml(sent) # remove HTMl tags
+    for w in sent.split():
+        for cleaned_words in cleanpunc(w).split():
+            if((cleaned_words.isalpha()) & (len(cleaned_words)>2)):
+                if(cleaned_words.lower() not in stop):
+                    filtered_sentence.append(lemmatizer.lemmatize(cleaned_words.lower(),wordnet.VERB))
+                else:
+                    continue
+            else:
+                continue
+    #print(filtered_sentence)
+    final_string.append(filtered_sentence)
+
+final_string[19]
+
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import wordnet
+
+lemmatizer = WordNetLemmatizer()
+
+print("love :", lemmatizer.lemmatize("used", wordnet.VERB))
+print("loving :", lemmatizer.lemmatize("use", wordnet.VERB))
+print("loved :", lemmatizer.lemmatize("using", pos=wordnet.VERB))
+
+trainDf.head(30)
+
+# importing gensim
+import gensim
+
+# creating a word to vector model
+model_w2v = gensim.models.Word2Vec(
+            final_string,
+            vector_size=200, # desired no. of features/independent variables
+            min_count=2,
+            workers= 5) # no.of cores
+
+model_w2v.train(final_string, total_examples= len(trainDf['Content']), epochs=20)
+
+model_w2v.wv.most_similar(positive = "bad")
